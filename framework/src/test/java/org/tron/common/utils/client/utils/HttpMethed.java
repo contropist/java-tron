@@ -23,6 +23,7 @@ import org.apache.http.impl.conn.PoolingClientConnectionManager;
 import org.apache.http.params.CoreConnectionPNames;
 import org.apache.http.util.EntityUtils;
 import org.junit.Assert;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.tron.api.GrpcAPI;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.ByteUtil;
@@ -4233,10 +4234,8 @@ public class HttpMethed {
   public static void freedResource(
       String httpNode, byte[] fromAddress, byte[] toAddress, String fromKey) {
     long balance = HttpMethed.getBalance(httpNode, fromAddress);
-    // System.out.println("剩余资源：" + balance);
     sendCoin(httpNode, fromAddress, toAddress, balance - 50000, fromKey);
     balance = HttpMethed.getBalance(httpNode, fromAddress);
-    // System.out.println("之后资源：" + balance);
   }
 
   /** constructor. */
@@ -4875,5 +4874,12 @@ public class HttpMethed {
       return null;
     }
     return response;
+  }
+
+  public static MockHttpServletRequest createRequest(String method) {
+    MockHttpServletRequest request = new MockHttpServletRequest();
+    request.setMethod(method);
+    request.setCharacterEncoding("UTF-8");
+    return request;
   }
 }

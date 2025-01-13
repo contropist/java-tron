@@ -33,6 +33,7 @@ import org.tron.core.db.TransactionTrace;
 import org.tron.core.exception.AccountResourceInsufficientException;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
+import org.tron.core.exception.TooBigTransactionException;
 import org.tron.core.exception.TooBigTransactionResultException;
 import org.tron.core.exception.TronException;
 import org.tron.core.exception.VMIllegalException;
@@ -67,10 +68,9 @@ public class BandWidthRuntimeOutOfTimeTest extends BaseTest {
   private static boolean init;
 
   static {
-    dbPath = "output_bandwidth_runtime_out_of_time_test";
     Args.setParam(
         new String[]{
-            "--output-directory", dbPath,
+            "--output-directory", dbPath(),
             "--storage-db-directory", dbDirectory,
             "--storage-index-directory", indexDirectory,
             "-w",
@@ -155,7 +155,8 @@ public class BandWidthRuntimeOutOfTimeTest extends BaseTest {
 
   private byte[] createContract()
       throws ContractValidateException, AccountResourceInsufficientException,
-      TooBigTransactionResultException, ContractExeException, VMIllegalException {
+      TooBigTransactionResultException, ContractExeException, VMIllegalException,
+      TooBigTransactionException {
     AccountCapsule owner = dbManager.getAccountStore()
         .get(Commons.decodeFromBase58Check(OwnerAddress));
     long energy = owner.getEnergyUsage();

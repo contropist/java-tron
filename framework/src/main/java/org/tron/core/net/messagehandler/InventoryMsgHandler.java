@@ -39,16 +39,26 @@ public class InventoryMsgHandler implements TronMsgHandler {
       Item item = new Item(id, type);
       peer.getAdvInvReceive().put(item, System.currentTimeMillis());
       advService.addInv(item);
+      if (type.equals(InventoryType.BLOCK) && peer.getAdvInvSpread().getIfPresent(item) == null) {
+        peer.setLastInteractiveTime(System.currentTimeMillis());
+      }
     }
   }
 
   private boolean check(PeerConnection peer, InventoryMessage inventoryMessage) {
+
     InventoryType type = inventoryMessage.getInventoryType();
     int size = inventoryMessage.getHashList().size();
 
     if (peer.isNeedSyncFromPeer() || peer.isNeedSyncFromUs()) {
       logger.warn("Drop inv: {} size: {} from Peer {}, syncFromUs: {}, syncFromPeer: {}",
           type, size, peer.getInetAddress(), peer.isNeedSyncFromUs(), peer.isNeedSyncFromPeer());
+      return false;
+    }
+
+    if (type.equals(InventoryType.TRX) && tronNetDelegate.isBlockUnsolidified()) {
+      logger.warn("Drop inv: {} size: {} from Peer {}, block unsolidified",
+          type, size, peer.getInetAddress());
       return false;
     }
 

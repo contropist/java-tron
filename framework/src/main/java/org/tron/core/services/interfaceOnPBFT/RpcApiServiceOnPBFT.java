@@ -1,10 +1,8 @@
 package org.tron.core.services.interfaceOnPBFT;
 
-import io.grpc.Server;
 import io.grpc.netty.NettyServerBuilder;
+import io.grpc.protobuf.services.ProtoReflectionService;
 import io.grpc.stub.StreamObserver;
-import java.io.IOException;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,18 +30,18 @@ import org.tron.api.GrpcAPI.NullifierResult;
 import org.tron.api.GrpcAPI.NumberMessage;
 import org.tron.api.GrpcAPI.OvkDecryptTRC20Parameters;
 import org.tron.api.GrpcAPI.PaginatedMessage;
+import org.tron.api.GrpcAPI.PricesResponseMessage;
 import org.tron.api.GrpcAPI.SpendResult;
 import org.tron.api.GrpcAPI.TransactionExtention;
 import org.tron.api.GrpcAPI.WitnessList;
 import org.tron.api.WalletSolidityGrpc.WalletSolidityImplBase;
-import org.tron.common.application.Service;
-import org.tron.common.crypto.ECKey;
+import org.tron.common.application.RpcService;
+import org.tron.common.es.ExecutorServiceManager;
 import org.tron.common.parameter.CommonParameter;
-import org.tron.common.utils.StringUtil;
-import org.tron.common.utils.Utils;
 import org.tron.core.config.args.Args;
 import org.tron.core.services.RpcApiService;
 import org.tron.core.services.filter.LiteFnQueryGrpcInterceptor;
+import org.tron.core.services.ratelimiter.PrometheusInterceptor;
 import org.tron.core.services.ratelimiter.RateLimiterInterceptor;
 import org.tron.core.services.ratelimiter.RpcApiAccessInterceptor;
 import org.tron.protos.Protocol.Account;
@@ -65,10 +63,7 @@ import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
 
 
 @Slf4j(topic = "API")
-public class RpcApiServiceOnPBFT implements Service {
-
-  private int port = Args.getInstance().getRpcOnPBFTPort();
-  private Server apiServer;
+public class RpcApiServiceOnPBFT extends RpcService {
 
   @Autowired
   private WalletOnPBFT walletOnPBFT;
@@ -85,13 +80,18 @@ public class RpcApiServiceOnPBFT implements Service {
   @Autowired
   private RpcApiAccessInterceptor apiAccessInterceptor;
 
+  @Autowired
+  private PrometheusInterceptor prometheusInterceptor;
+
+  private final String executorName = "rpc-pbft-executor";
+
   @Override
   public void init() {
   }
 
   @Override
   public void init(CommonParameter parameter) {
-
+    port = Args.getInstance().getRpcOnPBFTPort();
   }
 
   @Override
@@ -104,7 +104,8 @@ public class RpcApiServiceOnPBFT implements Service {
 
       if (args.getRpcThreadNum() > 0) {
         serverBuilder = serverBuilder
-            .executor(Executors.newFixedThreadPool(args.getRpcThreadNum()));
+            .executor(ExecutorServiceManager.newFixedThreadPool(
+                executorName, args.getRpcThreadNum()));
       }
 
       serverBuilder = serverBuilder.addService(new WalletPBFTApi());
@@ -127,28 +128,20 @@ public class RpcApiServiceOnPBFT implements Service {
       // add lite fullnode query interceptor
       serverBuilder.intercept(liteFnQueryGrpcInterceptor);
 
+      // add prometheus interceptor
+      if (args.isMetricsPrometheusEnable()) {
+        serverBuilder.intercept(prometheusInterceptor);
+      }
+
+      if (args.isRpcReflectionServiceEnable()) {
+        serverBuilder.addService(ProtoReflectionService.newInstance());
+      }
+
       apiServer = serverBuilder.build();
       rateLimiterInterceptor.init(apiServer);
-
-      apiServer.start();
-
-    } catch (IOException e) {
+      super.start();
+    } catch (Exception e) {
       logger.debug(e.getMessage(), e);
-    }
-
-    logger.info("RpcApiServiceOnPBFT started, listening on " + port);
-
-    Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-      System.err.println("*** shutting down gRPC server on PBFT since JVM is shutting down");
-      //server.this.stop();
-      System.err.println("*** server on PBFT shut down");
-    }));
-  }
-
-  @Override
-  public void stop() {
-    if (apiServer != null) {
-      apiServer.shutdown();
     }
   }
 
@@ -552,6 +545,20 @@ public class RpcApiServiceOnPBFT implements Service {
                          StreamObserver<BlockExtention> responseObserver) {
       walletOnPBFT.futureGet(
           () -> rpcApiService.getWalletSolidityApi().getBlock(request, responseObserver));
+    }
+
+    @Override
+    public void getBandwidthPrices(EmptyMessage request,
+        StreamObserver<PricesResponseMessage> responseObserver) {
+      walletOnPBFT.futureGet(
+          () -> rpcApiService.getWalletSolidityApi().getBandwidthPrices(request, responseObserver));
+    }
+
+    @Override
+    public void getEnergyPrices(EmptyMessage request,
+        StreamObserver<PricesResponseMessage> responseObserver) {
+      walletOnPBFT.futureGet(
+          () -> rpcApiService.getWalletSolidityApi().getEnergyPrices(request, responseObserver));
     }
 
   }

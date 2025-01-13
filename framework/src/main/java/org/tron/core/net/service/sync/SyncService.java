@@ -11,13 +11,13 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.tron.common.es.ExecutorServiceManager;
 import org.tron.common.utils.Pair;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.BlockCapsule.BlockId;
@@ -54,10 +54,13 @@ public class SyncService {
       .expireAfterWrite(blockCacheTimeout, TimeUnit.MINUTES).initialCapacity(10_000)
       .recordStats().build();
 
-  private ScheduledExecutorService fetchExecutor = Executors.newSingleThreadScheduledExecutor();
+  private final String fetchEsName = "sync-fetch-block";
+  private final String handleEsName = "sync-handle-block";
+  private final ScheduledExecutorService fetchExecutor = ExecutorServiceManager
+      .newSingleThreadScheduledExecutor(fetchEsName);
 
-  private ScheduledExecutorService blockHandleExecutor = Executors
-      .newSingleThreadScheduledExecutor();
+  private final ScheduledExecutorService blockHandleExecutor = ExecutorServiceManager
+      .newSingleThreadScheduledExecutor(handleEsName);
 
   private volatile boolean handleFlag = false;
 
@@ -91,8 +94,8 @@ public class SyncService {
   }
 
   public void close() {
-    fetchExecutor.shutdown();
-    blockHandleExecutor.shutdown();
+    ExecutorServiceManager.shutdownAndAwaitTermination(fetchExecutor, fetchEsName);
+    ExecutorServiceManager.shutdownAndAwaitTermination(blockHandleExecutor, handleEsName);
   }
 
   public void startSync(PeerConnection peer) {
@@ -131,7 +134,7 @@ public class SyncService {
       blockJustReceived.put(blockMessage, peer);
     }
     handleFlag = true;
-    if (peer.isIdle()) {
+    if (peer.isSyncIdle()) {
       if (peer.getRemainNum() > 0
           && peer.getSyncBlockToFetch().size() <= syncFetchBatchNum) {
         syncNext(peer);
@@ -223,7 +226,7 @@ public class SyncService {
   private void startFetchSyncBlock() {
     HashMap<PeerConnection, List<BlockId>> send = new HashMap<>();
     tronNetDelegate.getActivePeer().stream()
-        .filter(peer -> peer.isNeedSyncFromPeer() && peer.isIdle())
+        .filter(peer -> peer.isNeedSyncFromPeer() && peer.isSyncIdle())
         .filter(peer -> peer.isFetchAble())
         .forEach(peer -> {
           if (!send.containsKey(peer)) {
@@ -318,8 +321,9 @@ public class SyncService {
     }
 
     for (PeerConnection peer : tronNetDelegate.getActivePeer()) {
-      if (blockId.equals(peer.getSyncBlockToFetch().peek())) {
-        peer.getSyncBlockToFetch().pop();
+      BlockId bid = peer.getSyncBlockToFetch().peek();
+      if (blockId.equals(bid)) {
+        peer.getSyncBlockToFetch().remove(bid);
         if (flag) {
           peer.setBlockBothHave(blockId);
           if (peer.getSyncBlockToFetch().isEmpty() && peer.isFetchAble()) {
