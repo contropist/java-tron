@@ -42,8 +42,7 @@ public class ExchangeTransactionActuatorTest extends BaseTest {
   private static final String OWNER_ADDRESS_NOACCOUNT;
 
   static {
-    dbPath = "output_ExchangeTransaction_test";
-    Args.setParam(new String[]{"--output-directory", dbPath}, Constant.TEST_CONF);
+    Args.setParam(new String[]{"--output-directory", dbPath()}, Constant.TEST_CONF);
     OWNER_ADDRESS_FIRST =
         Wallet.getAddressPreFixString() + "abd4b9367799eaa3197fecb144eb71de1e049abc";
     OWNER_ADDRESS_SECOND =
@@ -1503,6 +1502,7 @@ public class ExchangeTransactionActuatorTest extends BaseTest {
   @Test
   public void SameTokenNameCloseTokenRequiredNotEnough() {
     dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(0);
+    final boolean useStrictMath = dbManager.getDynamicPropertiesStore().allowStrictMath();
     InitExchangeBeforeSameTokenNameActive();
     long exchangeId = 2;
     String tokenId = "abc";
@@ -1521,7 +1521,7 @@ public class ExchangeTransactionActuatorTest extends BaseTest {
     try {
       ExchangeCapsule exchangeCapsule = dbManager.getExchangeStore()
           .get(ByteArray.fromLong(exchangeId));
-      expected = exchangeCapsule.transaction(tokenId.getBytes(), quant);
+      expected = exchangeCapsule.transaction(tokenId.getBytes(), quant, useStrictMath);
     } catch (ItemNotFoundException e) {
       fail();
     }
@@ -1556,6 +1556,7 @@ public class ExchangeTransactionActuatorTest extends BaseTest {
   @Test
   public void SameTokenNameOpenTokenRequiredNotEnough() {
     dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(1);
+    final boolean useStrictMath = dbManager.getDynamicPropertiesStore().allowStrictMath();
     InitExchangeSameTokenNameActive();
     long exchangeId = 2;
     String tokenId = "123";
@@ -1576,7 +1577,7 @@ public class ExchangeTransactionActuatorTest extends BaseTest {
     try {
       ExchangeCapsule exchangeCapsuleV2 = dbManager.getExchangeV2Store()
           .get(ByteArray.fromLong(exchangeId));
-      expected = exchangeCapsuleV2.transaction(tokenId.getBytes(), quant);
+      expected = exchangeCapsuleV2.transaction(tokenId.getBytes(), quant, useStrictMath);
     } catch (ItemNotFoundException e) {
       fail();
     }

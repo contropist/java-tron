@@ -16,6 +16,8 @@ import static org.tron.common.utils.ByteUtil.stripLeadingZeroes;
 import static org.tron.core.config.Parameter.ChainConstant.TRX_PRECISION;
 
 import com.google.protobuf.ByteString;
+
+import java.lang.reflect.Constructor;
 import java.math.BigInteger;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -26,7 +28,6 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import lombok.AllArgsConstructor;
@@ -46,6 +47,7 @@ import org.tron.common.crypto.zksnark.BN128G1;
 import org.tron.common.crypto.zksnark.BN128G2;
 import org.tron.common.crypto.zksnark.Fp;
 import org.tron.common.crypto.zksnark.PairingCheck;
+import org.tron.common.es.ExecutorServiceManager;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.runtime.ProgramResult;
 import org.tron.common.runtime.vm.DataWord;
@@ -194,6 +196,14 @@ public class PrecompiledContracts {
   private static final DataWord blake2FAddr = new DataWord(
       "0000000000000000000000000000000000000000000000000000000000020009");
 
+  public static PrecompiledContract getOptimizedContractForConstant(PrecompiledContract contract) {
+    try {
+      Constructor<?> constructor = contract.getClass().getDeclaredConstructor();
+      return  (PrecompiledContracts.PrecompiledContract) constructor.newInstance();
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
+  }
 
   public static PrecompiledContract getContractForAddress(DataWord address) {
 
@@ -983,11 +993,13 @@ public class PrecompiledContracts {
   public static class BatchValidateSign extends PrecompiledContract {
 
     private static final ExecutorService workers;
+    private static final String workersName = "validate-sign-contract";
     private static final int ENGERYPERSIGN = 1500;
     private static final int MAX_SIZE = 16;
 
     static {
-      workers = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors() / 2 + 1);
+      workers = ExecutorServiceManager.newFixedThreadPool(workersName,
+          Runtime.getRuntime().availableProcessors() / 2 + 1);
     }
 
     @Override
@@ -1290,10 +1302,12 @@ public class PrecompiledContracts {
     private static final Integer[] SIZE = {2080, 2368, 2464, 2752};
     private static final ExecutorService workersInConstantCall;
     private static final ExecutorService workersInNonConstantCall;
+    private static final String constantCallName = "verify-transfer-constant-call";
+    private static final String nonConstantCallName = "verify-transfer-non-constant-call";
 
     static {
-      workersInConstantCall = Executors.newFixedThreadPool(5);
-      workersInNonConstantCall = Executors.newFixedThreadPool(5);
+      workersInConstantCall = ExecutorServiceManager.newFixedThreadPool(constantCallName, 5);
+      workersInNonConstantCall = ExecutorServiceManager.newFixedThreadPool(nonConstantCallName, 5);
     }
 
     @Override

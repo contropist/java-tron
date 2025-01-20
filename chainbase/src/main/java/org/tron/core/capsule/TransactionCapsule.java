@@ -17,6 +17,7 @@ package org.tron.core.capsule;
 
 import static org.tron.common.utils.StringUtil.encode58Check;
 import static org.tron.common.utils.WalletUtil.checkPermissionOperations;
+import static org.tron.core.Constant.MAX_CONTRACT_RESULT_SIZE;
 import static org.tron.core.exception.P2pException.TypeEnum.PROTOBUF_ERROR;
 
 import com.google.common.primitives.Bytes;
@@ -33,7 +34,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import lombok.Getter;
@@ -43,6 +43,7 @@ import org.apache.commons.lang3.ArrayUtils;
 import org.tron.common.crypto.ECKey.ECDSASignature;
 import org.tron.common.crypto.SignInterface;
 import org.tron.common.crypto.SignUtils;
+import org.tron.common.es.ExecutorServiceManager;
 import org.tron.common.overlay.message.Message;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
@@ -58,6 +59,7 @@ import org.tron.core.exception.ContractValidateException;
 import org.tron.core.exception.P2pException;
 import org.tron.core.exception.PermissionException;
 import org.tron.core.exception.SignatureFormatException;
+import org.tron.core.exception.TransactionExpirationException;
 import org.tron.core.exception.ValidateSignatureException;
 import org.tron.core.store.AccountStore;
 import org.tron.core.store.DynamicPropertiesStore;
@@ -86,8 +88,9 @@ import org.tron.protos.contract.WitnessContract.WitnessUpdateContract;
 @Slf4j(topic = "capsule")
 public class TransactionCapsule implements ProtoCapsule<Transaction> {
 
-  private static final ExecutorService executorService = Executors
-      .newFixedThreadPool(CommonParameter.getInstance()
+  private static final String esName = "valid-contract-proto";
+  private static final ExecutorService executorService = ExecutorServiceManager
+      .newFixedThreadPool(esName, CommonParameter.getInstance()
           .getValidContractProtoThreadNum());
   private static final String OWNER_ADDRESS = "ownerAddress_";
 
@@ -101,7 +104,6 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
   @Setter
   private TransactionTrace trxTrace;
 
-  private StringBuilder toStringBuff = new StringBuilder();
   @Getter
   @Setter
   private long time;
@@ -114,6 +116,9 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
   @Getter
   @Setter
   private boolean isTransactionCreate = false;
+  @Getter
+  @Setter
+  private boolean isInBlock = false;
 
   public byte[] getOwnerAddress() {
     if (this.ownerAddress == null) {
@@ -346,6 +351,10 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
         }
       }
       return owner.toByteArray();
+    } catch (InvalidProtocolBufferException invalidProtocolBufferException) {
+      logger.warn("InvalidProtocolBufferException occurred because {}, please verify the interface "
+          + "input parameters", invalidProtocolBufferException.getMessage());
+      return new byte[0];
     } catch (Exception ex) {
       logger.error(ex.getMessage());
       return new byte[0];
@@ -726,6 +735,15 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
     return size;
   }
 
+  public long getResultSizeWithMaxContractRet() {
+    long size = 0;
+    for (Result result : this.transaction.getRetList()) {
+      size += result.toBuilder().clearContractRet().build().getSerializedSize()
+          + MAX_CONTRACT_RESULT_SIZE;
+    }
+    return size;
+  }
+
   @Override
   public Transaction getInstance() {
     return this.transaction;
@@ -733,8 +751,7 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
 
   @Override
   public String toString() {
-
-    toStringBuff.setLength(0);
+    StringBuilder toStringBuff = new StringBuilder();
     toStringBuff.append("TransactionCapsule \n[ ");
 
     toStringBuff.append("hash=").append(getTransactionId()).append("\n");
@@ -837,6 +854,28 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
           .unpack(BalanceContract.TransferContract.class);
     } catch (InvalidProtocolBufferException e) {
       return null;
+    }
+  }
+
+  public void removeRedundantRet() {
+    Transaction tx = this.getInstance();
+    List<Result> tmpList = new ArrayList<>(tx.getRetList());
+    int contractCount = tx.getRawData().getContractCount();
+    if (tx.getRetCount() > contractCount && contractCount > 0) {
+      Transaction.Builder transactionBuilder = tx.toBuilder().clearRet();
+      for (int i = 0; i < contractCount; i++) {
+        Result result = tmpList.get(i);
+        transactionBuilder.addRet(result);
+      }
+      this.transaction = transactionBuilder.build();
+    }
+  }
+
+  public void checkExpiration(long nextSlotTime) throws TransactionExpirationException {
+    if (getExpiration() < nextSlotTime) {
+      throw new TransactionExpirationException(String.format(
+          "Transaction expiration time is %d, but next slot time is %d",
+          getExpiration(), nextSlotTime));
     }
   }
 }

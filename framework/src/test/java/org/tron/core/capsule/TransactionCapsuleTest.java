@@ -1,5 +1,9 @@
 package org.tron.core.capsule;
 
+import static org.tron.protos.Protocol.Transaction.Result.contractResult.BAD_JUMP_DESTINATION;
+import static org.tron.protos.Protocol.Transaction.Result.contractResult.PRECOMPILED_CONTRACT;
+import static org.tron.protos.Protocol.Transaction.Result.contractResult.SUCCESS;
+
 import com.google.protobuf.ByteString;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.Assert;
@@ -13,8 +17,10 @@ import org.tron.core.Wallet;
 import org.tron.core.config.args.Args;
 import org.tron.protos.Protocol.AccountType;
 import org.tron.protos.Protocol.Transaction;
+import org.tron.protos.Protocol.Transaction.Contract.ContractType;
 import org.tron.protos.Protocol.Transaction.Result;
 import org.tron.protos.Protocol.Transaction.Result.contractResult;
+import org.tron.protos.Protocol.Transaction.raw;
 
 @Slf4j
 public class TransactionCapsuleTest extends BaseTest {
@@ -46,8 +52,7 @@ public class TransactionCapsuleTest extends BaseTest {
 
   @BeforeClass
   public static void init() {
-    dbPath = "output_transactioncapsule_test";
-    Args.setParam(new String[]{"-d", dbPath}, Constant.TEST_CONF);
+    Args.setParam(new String[]{"-d", dbPath()}, Constant.TEST_CONF);
     OWNER_ADDRESS = Wallet.getAddressPreFixString() + "03702350064AD5C1A8AA6B4D74B051199CFF8EA7";
     /*TO_ADDRESS = Wallet.getAddressPreFixString() + "abd4b9367799eaa3197fecb144eb71de1e049abc";
     OWNER_ACCOUNT_NOT_Exist =
@@ -1064,5 +1069,19 @@ public class TransactionCapsuleTest extends BaseTest {
     trxCap.setResultCode(contractResult);
     Assert.assertEquals(trxCap.getInstance()
         .getRet(0).getContractRet(), Result.contractResult.OUT_OF_TIME);
+  }
+
+  @Test
+  public void testRemoveRedundantRet() {
+    Transaction.Builder transaction = Transaction.newBuilder().setRawData(raw.newBuilder()
+        .addContract(Transaction.Contract.newBuilder().setType(ContractType.TriggerSmartContract))
+        .setFeeLimit(1000000000)).build().toBuilder();
+    transaction.addRet(Result.newBuilder().setContractRet(SUCCESS).build());
+    transaction.addRet(Result.newBuilder().setContractRet(PRECOMPILED_CONTRACT).build());
+    transaction.addRet(Result.newBuilder().setContractRet(BAD_JUMP_DESTINATION).build());
+    TransactionCapsule transactionCapsule = new TransactionCapsule(transaction.build());
+    transactionCapsule.removeRedundantRet();
+    Assert.assertEquals(1, transactionCapsule.getInstance().getRetCount());
+    Assert.assertEquals(SUCCESS, transactionCapsule.getInstance().getRet(0).getContractRet());
   }
 }

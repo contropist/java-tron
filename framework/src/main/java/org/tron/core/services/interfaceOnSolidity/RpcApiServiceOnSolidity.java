@@ -1,11 +1,9 @@
 package org.tron.core.services.interfaceOnSolidity;
 
 import com.google.protobuf.ByteString;
-import io.grpc.Server;
 import io.grpc.netty.NettyServerBuilder;
+import io.grpc.protobuf.services.ProtoReflectionService;
 import io.grpc.stub.StreamObserver;
-import java.io.IOException;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,6 +26,7 @@ import org.tron.api.GrpcAPI.GetAvailableUnfreezeCountResponseMessage;
 import org.tron.api.GrpcAPI.NoteParameters;
 import org.tron.api.GrpcAPI.NumberMessage;
 import org.tron.api.GrpcAPI.PaginatedMessage;
+import org.tron.api.GrpcAPI.PricesResponseMessage;
 import org.tron.api.GrpcAPI.Return;
 import org.tron.api.GrpcAPI.Return.response_code;
 import org.tron.api.GrpcAPI.SpendResult;
@@ -35,17 +34,15 @@ import org.tron.api.GrpcAPI.TransactionExtention;
 import org.tron.api.GrpcAPI.TransactionInfoList;
 import org.tron.api.GrpcAPI.WitnessList;
 import org.tron.api.WalletSolidityGrpc.WalletSolidityImplBase;
-import org.tron.common.application.Service;
-import org.tron.common.crypto.SignInterface;
-import org.tron.common.crypto.SignUtils;
+import org.tron.common.application.RpcService;
+import org.tron.common.es.ExecutorServiceManager;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.Sha256Hash;
-import org.tron.common.utils.StringUtil;
-import org.tron.common.utils.Utils;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.config.args.Args;
 import org.tron.core.services.RpcApiService;
 import org.tron.core.services.filter.LiteFnQueryGrpcInterceptor;
+import org.tron.core.services.ratelimiter.PrometheusInterceptor;
 import org.tron.core.services.ratelimiter.RateLimiterInterceptor;
 import org.tron.core.services.ratelimiter.RpcApiAccessInterceptor;
 import org.tron.protos.Protocol.Account;
@@ -67,10 +64,8 @@ import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
 
 
 @Slf4j(topic = "API")
-public class RpcApiServiceOnSolidity implements Service {
+public class RpcApiServiceOnSolidity extends RpcService {
 
-  private int port = Args.getInstance().getRpcOnSolidityPort();
-  private Server apiServer;
 
   @Autowired
   private WalletOnSolidity walletOnSolidity;
@@ -87,12 +82,18 @@ public class RpcApiServiceOnSolidity implements Service {
   @Autowired
   private RpcApiAccessInterceptor apiAccessInterceptor;
 
+  @Autowired
+  private PrometheusInterceptor prometheusInterceptor;
+
+  private final String executorName = "rpc-solidity-executor";
+
   @Override
   public void init() {
   }
 
   @Override
   public void init(CommonParameter args) {
+    port = Args.getInstance().getRpcOnSolidityPort();
   }
 
   @Override
@@ -105,7 +106,8 @@ public class RpcApiServiceOnSolidity implements Service {
 
       if (parameter.getRpcThreadNum() > 0) {
         serverBuilder = serverBuilder
-            .executor(Executors.newFixedThreadPool(parameter.getRpcThreadNum()));
+            .executor(ExecutorServiceManager.newFixedThreadPool(
+                executorName, parameter.getRpcThreadNum()));
       }
 
       serverBuilder = serverBuilder.addService(new WalletSolidityApi());
@@ -127,22 +129,21 @@ public class RpcApiServiceOnSolidity implements Service {
       // add lite fullnode query interceptor
       serverBuilder.intercept(liteFnQueryGrpcInterceptor);
 
+      // add prometheus interceptor
+      if (parameter.isMetricsPrometheusEnable()) {
+        serverBuilder.intercept(prometheusInterceptor);
+      }
+
+      if (parameter.isRpcReflectionServiceEnable()) {
+        serverBuilder.addService(ProtoReflectionService.newInstance());
+      }
+
       apiServer = serverBuilder.build();
       rateLimiterInterceptor.init(apiServer);
-
-      apiServer.start();
-
-    } catch (IOException e) {
+      super.start();
+    } catch (Exception e) {
       logger.debug(e.getMessage(), e);
     }
-
-    logger.info("RpcApiServiceOnSolidity started, listening on " + port);
-
-    Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-      System.err.println("*** shutting down gRPC server on solidity since JVM is shutting down");
-      //server.this.stop();
-      System.err.println("*** server on solidity shut down");
-    }));
   }
 
   private TransactionExtention transaction2Extention(Transaction transaction) {
@@ -172,13 +173,6 @@ public class RpcApiServiceOnSolidity implements Service {
       builder.addTransactions(transaction2Extention(transaction));
     }
     return builder.build();
-  }
-
-  @Override
-  public void stop() {
-    if (apiServer != null) {
-      apiServer.shutdown();
-    }
   }
 
   /**
@@ -535,6 +529,20 @@ public class RpcApiServiceOnSolidity implements Service {
                          StreamObserver<BlockExtention> responseObserver) {
       walletOnSolidity.futureGet(
           () -> rpcApiService.getWalletSolidityApi().getBlock(request, responseObserver));
+    }
+
+    @Override
+    public void getBandwidthPrices(EmptyMessage request,
+        StreamObserver<PricesResponseMessage> responseObserver) {
+      walletOnSolidity.futureGet(
+          () -> rpcApiService.getWalletSolidityApi().getBandwidthPrices(request, responseObserver));
+    }
+
+    @Override
+    public void getEnergyPrices(EmptyMessage request,
+        StreamObserver<PricesResponseMessage> responseObserver) {
+      walletOnSolidity.futureGet(
+          () -> rpcApiService.getWalletSolidityApi().getEnergyPrices(request, responseObserver));
     }
 
   }

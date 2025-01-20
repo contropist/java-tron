@@ -64,9 +64,9 @@ import org.tron.core.exception.TransactionExpirationException;
 import org.tron.core.exception.VMIllegalException;
 import org.tron.core.exception.ValidateSignatureException;
 import org.tron.core.exception.ZksnarkException;
-import org.tron.core.services.http.FullNodeHttpApiService;
 import org.tron.core.zen.ZenTransactionBuilder;
 import org.tron.core.zen.ZenTransactionBuilder.SpendDescriptionInfo;
+import org.tron.core.zen.ZksnarkInitService;
 import org.tron.core.zen.address.DiversifierT;
 import org.tron.core.zen.address.ExpandedSpendingKey;
 import org.tron.core.zen.address.FullViewingKey;
@@ -110,8 +110,7 @@ public class SendCoinShieldTest extends BaseTest {
   private static boolean init;
 
   static {
-    dbPath = "output_ShieldedTransaction_test";
-    Args.setParam(new String[]{"--output-directory", dbPath}, "config-test-mainnet.conf");
+    Args.setParam(new String[]{"--output-directory", dbPath()}, "config-test-mainnet.conf");
     Args.getInstance().setZenTokenId(String.valueOf(tokenId));
     PUBLIC_ADDRESS_ONE =
         Wallet.getAddressPreFixString() + "a7d8a35b260395c14aa456297662092ba3b76fc0";
@@ -221,7 +220,7 @@ public class SendCoinShieldTest extends BaseTest {
   }
 
   private void librustzcashInitZksnarkParams() {
-    FullNodeHttpApiService.librustzcashInitZksnarkParams();
+    ZksnarkInitService.librustzcashInitZksnarkParams();
   }
 
   @Test
@@ -1696,6 +1695,7 @@ public class SendCoinShieldTest extends BaseTest {
           System.out.println(
               "rk:" + ByteArray.toHexString(spendDescriptionCapsule.getRk().toByteArray()));
           spendDescriptionCapsule.setRk(fakeRk);
+          spendDescriptionCapsule.setRk(ByteString.copyFrom(fakeRk));
           return spendDescriptionCapsule;
         }
       };
@@ -1738,6 +1738,9 @@ public class SendCoinShieldTest extends BaseTest {
               .toHexString(spendDescriptionCapsule.getZkproof().toByteArray()));
 
           spendDescriptionCapsule.setZkproof(fakeProof);
+          spendDescriptionCapsule.setZkproof(ByteString.copyFrom(fakeProof));
+          spendDescriptionCapsule.setSpendAuthoritySignature(spendDescriptionCapsule
+              .getSpendAuthoritySignature());
           return spendDescriptionCapsule;
         }
       };
@@ -1776,6 +1779,7 @@ public class SendCoinShieldTest extends BaseTest {
           System.out.println(
               "nf:" + ByteArray.toHexString(spendDescriptionCapsule.getNullifier().toByteArray()));
           spendDescriptionCapsule.setNullifier(bytes);
+          spendDescriptionCapsule.setNullifier(ByteString.copyFrom(bytes));
           return spendDescriptionCapsule;
         }
       };
@@ -1812,6 +1816,9 @@ public class SendCoinShieldTest extends BaseTest {
           System.out.println(
               "bytes:" + ByteArray.toHexString(spendDescriptionCapsule.getAnchor().toByteArray()));
           spendDescriptionCapsule.setAnchor(bytes);
+          spendDescriptionCapsule.setAnchor(ByteString.copyFrom(bytes));
+          spendDescriptionCapsule.setValueCommitment(new byte[32]);
+          spendDescriptionCapsule.setValueCommitment(ByteString.copyFrom(new byte[32]));
           return spendDescriptionCapsule;
         }
       };
@@ -1828,5 +1835,14 @@ public class SendCoinShieldTest extends BaseTest {
         System.out.println("Done");
       }
     }
+
+    SpendDescriptionCapsule c = new SpendDescriptionCapsule(new byte[32]);
+    SpendDescriptionCapsule c1 = new SpendDescriptionCapsule(ByteString.copyFrom(new byte[32]),
+        ByteString.copyFrom(new byte[32]),
+        ByteString.copyFrom(new byte[32]),
+        ByteString.copyFrom(new byte[32]),
+        ByteString.copyFrom(new byte[32]),ByteString.copyFrom(new byte[32]));
+    Assert.assertNotNull(c);
+    Assert.assertNotNull(c1);
   }
 }

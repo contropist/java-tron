@@ -5,14 +5,12 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 import com.google.protobuf.ProtocolStringList;
-import io.grpc.Server;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.netty.NettyServerBuilder;
+import io.grpc.protobuf.services.ProtoReflectionService;
 import io.grpc.stub.StreamObserver;
-import java.io.IOException;
 import java.util.Objects;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
@@ -50,6 +48,7 @@ import org.tron.api.GrpcAPI.NumberMessage;
 import org.tron.api.GrpcAPI.OvkDecryptTRC20Parameters;
 import org.tron.api.GrpcAPI.PaginatedMessage;
 import org.tron.api.GrpcAPI.PaymentAddressMessage;
+import org.tron.api.GrpcAPI.PricesResponseMessage;
 import org.tron.api.GrpcAPI.PrivateParameters;
 import org.tron.api.GrpcAPI.PrivateParametersWithoutAsk;
 import org.tron.api.GrpcAPI.PrivateShieldedTRC20Parameters;
@@ -75,7 +74,8 @@ import org.tron.api.MonitorGrpc;
 import org.tron.api.WalletExtensionGrpc;
 import org.tron.api.WalletGrpc.WalletImplBase;
 import org.tron.api.WalletSolidityGrpc.WalletSolidityImplBase;
-import org.tron.common.application.Service;
+import org.tron.common.application.RpcService;
+import org.tron.common.es.ExecutorServiceManager;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Sha256Hash;
@@ -89,6 +89,7 @@ import org.tron.core.capsule.WitnessCapsule;
 import org.tron.core.config.args.Args;
 import org.tron.core.db.Manager;
 import org.tron.core.exception.BadItemException;
+import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
 import org.tron.core.exception.ItemNotFoundException;
 import org.tron.core.exception.NonUniqueObjectException;
@@ -97,6 +98,7 @@ import org.tron.core.exception.VMIllegalException;
 import org.tron.core.exception.ZksnarkException;
 import org.tron.core.metrics.MetricsApiService;
 import org.tron.core.services.filter.LiteFnQueryGrpcInterceptor;
+import org.tron.core.services.ratelimiter.PrometheusInterceptor;
 import org.tron.core.services.ratelimiter.RateLimiterInterceptor;
 import org.tron.core.services.ratelimiter.RpcApiAccessInterceptor;
 import org.tron.core.utils.TransactionUtil;
@@ -163,27 +165,21 @@ import org.tron.protos.contract.WitnessContract.WitnessUpdateContract;
 
 @Component
 @Slf4j(topic = "API")
-public class RpcApiService implements Service {
+public class RpcApiService extends RpcService {
 
   public static final String CONTRACT_VALIDATE_EXCEPTION = "ContractValidateException: {}";
   private static final String EXCEPTION_CAUGHT = "exception caught";
   private static final String UNKNOWN_EXCEPTION_CAUGHT = "unknown exception caught: ";
   private static final long BLOCK_LIMIT_NUM = 100;
   private static final long TRANSACTION_LIMIT_NUM = 1000;
-  private int port = Args.getInstance().getRpcPort();
-  private Server apiServer;
   @Autowired
   private Manager dbManager;
-
   @Autowired
   private ChainBaseManager chainBaseManager;
-
   @Autowired
   private Wallet wallet;
-
   @Autowired
   private TransactionUtil transactionUtil;
-
   @Autowired
   private NodeInfoService nodeInfoService;
   @Autowired
@@ -192,10 +188,10 @@ public class RpcApiService implements Service {
   private LiteFnQueryGrpcInterceptor liteFnQueryGrpcInterceptor;
   @Autowired
   private RpcApiAccessInterceptor apiAccessInterceptor;
-
   @Autowired
   private MetricsApiService metricsApiService;
-
+  @Autowired
+  private PrometheusInterceptor prometheusInterceptor;
   @Getter
   private DatabaseApi databaseApi = new DatabaseApi();
   private WalletApi walletApi = new WalletApi();
@@ -204,6 +200,8 @@ public class RpcApiService implements Service {
   @Getter
   private MonitorApi monitorApi = new MonitorApi();
 
+  private final String executorName = "rpc-full-executor";
+
   @Override
   public void init() {
 
@@ -211,6 +209,7 @@ public class RpcApiService implements Service {
 
   @Override
   public void init(CommonParameter args) {
+    port = Args.getInstance().getRpcPort();
   }
 
   @Override
@@ -221,7 +220,8 @@ public class RpcApiService implements Service {
 
       if (parameter.getRpcThreadNum() > 0) {
         serverBuilder = serverBuilder
-            .executor(Executors.newFixedThreadPool(parameter.getRpcThreadNum()));
+            .executor(ExecutorServiceManager.newFixedThreadPool(
+                executorName, parameter.getRpcThreadNum()));
       }
 
       if (parameter.isSolidityNode()) {
@@ -255,21 +255,21 @@ public class RpcApiService implements Service {
       // add lite fullnode query interceptor
       serverBuilder.intercept(liteFnQueryGrpcInterceptor);
 
+      // add prometheus interceptor
+      if (parameter.isMetricsPrometheusEnable()) {
+        serverBuilder.intercept(prometheusInterceptor);
+      }
+
+      if (parameter.isRpcReflectionServiceEnable()) {
+        serverBuilder.addService(ProtoReflectionService.newInstance());
+      }
+
       apiServer = serverBuilder.build();
       rateLimiterInterceptor.init(apiServer);
-
-      apiServer.start();
-    } catch (IOException e) {
+      super.start();
+    } catch (Exception e) {
       logger.debug(e.getMessage(), e);
     }
-
-    logger.info("RpcApiService has started, listening on " + port);
-
-    Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-      System.err.println("*** shutting down gRPC server since JVM is shutting down");
-      //server.this.stop();
-      System.err.println("*** server is shutdown");
-    }));
   }
 
 
@@ -365,27 +365,6 @@ public class RpcApiService implements Service {
     String msg = "Not support Shielded TRC20 Transaction, need to be opened by the committee";
     if (!dbManager.getDynamicPropertiesStore().supportShieldedTRC20Transaction()) {
       throw new ZksnarkException(msg);
-    }
-  }
-
-  @Override
-  public void stop() {
-    if (apiServer != null) {
-      apiServer.shutdown();
-    }
-  }
-
-  /**
-   * ...
-   */
-  public void blockUntilShutdown() {
-    if (apiServer != null) {
-      try {
-        apiServer.awaitTermination();
-      } catch (InterruptedException e) {
-        logger.warn("{}", e);
-        Thread.currentThread().interrupt();
-      }
     }
   }
 
@@ -993,6 +972,28 @@ public class RpcApiService implements Service {
     public void getBlock(GrpcAPI.BlockReq  request,
         StreamObserver<BlockExtention> responseObserver) {
       getBlockCommon(request, responseObserver);
+    }
+
+    @Override
+    public void getBandwidthPrices(EmptyMessage request,
+        StreamObserver<PricesResponseMessage> responseObserver) {
+      try {
+        responseObserver.onNext(wallet.getBandwidthPrices());
+      } catch (Exception e) {
+        responseObserver.onError(getRunTimeException(e));
+      }
+      responseObserver.onCompleted();
+    }
+
+    @Override
+    public void getEnergyPrices(EmptyMessage request,
+        StreamObserver<PricesResponseMessage> responseObserver) {
+      try {
+        responseObserver.onNext(wallet.getEnergyPrices());
+      } catch (Exception e) {
+        responseObserver.onError(getRunTimeException(e));
+      }
+      responseObserver.onCompleted();
     }
   }
 
@@ -2028,6 +2029,39 @@ public class RpcApiService implements Service {
     }
 
     @Override
+    public void getBandwidthPrices(EmptyMessage request,
+        StreamObserver<PricesResponseMessage> responseObserver) {
+      try {
+        responseObserver.onNext(wallet.getBandwidthPrices());
+      } catch (Exception e) {
+        responseObserver.onError(getRunTimeException(e));
+      }
+      responseObserver.onCompleted();
+    }
+
+    @Override
+    public void getEnergyPrices(EmptyMessage request,
+        StreamObserver<PricesResponseMessage> responseObserver) {
+      try {
+        responseObserver.onNext(wallet.getEnergyPrices());
+      } catch (Exception e) {
+        responseObserver.onError(getRunTimeException(e));
+      }
+      responseObserver.onCompleted();
+    }
+
+    @Override
+    public void getMemoFee(EmptyMessage request,
+        StreamObserver<PricesResponseMessage> responseObserver) {
+      try {
+        responseObserver.onNext(wallet.getMemoFeePrices());
+      } catch (Exception e) {
+        responseObserver.onError(getRunTimeException(e));
+      }
+      responseObserver.onCompleted();
+    }
+
+    @Override
     public void getPaginatedProposalList(PaginatedMessage request,
         StreamObserver<ProposalList> responseObserver) {
       responseObserver
@@ -2450,9 +2484,13 @@ public class RpcApiService implements Service {
         ShieldedTRC20Parameters shieldedTRC20Parameters = wallet
             .createShieldedContractParameters(request);
         responseObserver.onNext(shieldedTRC20Parameters);
+      } catch (ZksnarkException | ContractValidateException | ContractExeException e) {
+        responseObserver.onError(getRunTimeException(e));
+        logger.info("createShieldedContractParameters: {}", e.getMessage());
+        return;
       } catch (Exception e) {
         responseObserver.onError(getRunTimeException(e));
-        logger.info("createShieldedContractParameters exception caught: " + e.getMessage());
+        logger.error("createShieldedContractParameters: ", e);
         return;
       }
       responseObserver.onCompleted();
@@ -2493,9 +2531,13 @@ public class RpcApiService implements Service {
             request.getNk().toByteArray(),
             request.getEventsList());
         responseObserver.onNext(decryptNotes);
+      } catch (BadItemException | ZksnarkException e) {
+        responseObserver.onError(getRunTimeException(e));
+        logger.info("scanShieldedTRC20NotesByIvk: {}", e.getMessage());
+        return;
       } catch (Exception e) {
         responseObserver.onError(getRunTimeException(e));
-        logger.info("scanShieldedTRC20NotesByIvk exception caught: " + e.getMessage());
+        logger.error("scanShieldedTRC20NotesByIvk:", e);
         return;
       }
       responseObserver.onCompleted();

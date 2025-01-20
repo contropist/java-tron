@@ -18,6 +18,7 @@ import org.tron.core.Constant;
 import org.tron.core.config.args.Overlay;
 import org.tron.core.config.args.SeedNode;
 import org.tron.core.config.args.Storage;
+import org.tron.p2p.P2pConfig;
 import org.tron.p2p.dns.update.PublishConfig;
 
 public class CommonParameter {
@@ -67,12 +68,12 @@ public class CommonParameter {
   @Getter
   @Setter
   @Parameter(names = {"--min-time-ratio"}, description = "Maximum CPU tolerance when executing "
-      + "non-timeout transactions while synchronizing blocks. (default: 5.0)")
+      + "timeout transactions while synchronizing blocks. (default: 0.0)")
   public double minTimeRatio = 0.0;
   @Getter
   @Setter
   @Parameter(names = {"--max-time-ratio"}, description = "Maximum CPU tolerance when executing "
-      + "timeout transactions while synchronizing blocks. (default: 0.0)")
+      + "non-timeout transactions while synchronizing blocks. (default: 5.0)")
   public double maxTimeRatio = calcMaxTimeRatio();
   @Getter
   @Setter
@@ -169,29 +170,19 @@ public class CommonParameter {
   @Setter
   public int minParticipationRate;
   @Getter
+  public P2pConfig p2pConfig;
+  @Getter
   @Setter
   public int nodeListenPort;
   @Getter
   @Setter
-  public String nodeDiscoveryBindIp;
+  public String nodeLanIp;
   @Getter
   @Setter
   public String nodeExternalIp;
   @Getter
   @Setter
-  public boolean nodeDiscoveryPublicHomeNode;
-  @Getter
-  @Setter
-  public long nodeDiscoveryPingTimeout;
-  @Getter
-  @Setter
-  public long nodeP2pPingInterval;
-  @Getter
-  @Setter
   public int nodeP2pVersion;
-  @Getter
-  @Setter
-  public String p2pNodeId;
   @Getter
   @Setter
   public boolean nodeEnableIpv6 = false;
@@ -262,6 +253,9 @@ public class CommonParameter {
   @Getter
   @Setter
   public int maxHeaderListSize;
+  @Getter
+  @Setter
+  public boolean isRpcReflectionServiceEnable;
   @Getter
   @Setter
   @Parameter(names = {"--validate-sign-thread"}, description = "Num of validate thread")
@@ -337,6 +331,9 @@ public class CommonParameter {
   @Getter
   @Setter
   public boolean isOpenFullTcpDisconnect;
+  @Getter
+  @Setter
+  public int inactiveThreshold;
   @Getter
   @Setter
   public boolean nodeDetectEnable;
@@ -423,6 +420,8 @@ public class CommonParameter {
   @Getter
   @Setter
   public int rateLimiterGlobalIpQps;
+  @Getter
+  public int rateLimiterGlobalApiQps;
   @Getter
   public DbBackupConfig dbBackupConfig;
   @Getter
@@ -523,6 +522,9 @@ public class CommonParameter {
   @Getter
   @Setter
   public int pBFTHttpPort;
+  @Getter
+  @Setter
+  public long pBFTExpireNum;
   @Getter
   @Setter
   public long oldSolidityBlockNum = -1;
@@ -654,6 +656,34 @@ public class CommonParameter {
   @Getter
   @Setter
   public long allowCancelAllUnfreezeV2;
+
+  @Getter
+  @Setter
+  public boolean unsolidifiedBlockCheck;
+
+  @Getter
+  @Setter
+  public int maxUnsolidifiedBlocks;
+
+  @Getter
+  @Setter
+  public long allowOldRewardOpt;
+
+  @Getter
+  @Setter
+  public long allowEnergyAdjustment;
+
+  @Getter
+  @Setter
+  public long maxCreateAccountTxSize = 1000L;
+
+  @Getter
+  @Setter
+  public long allowStrictMath;
+
+  @Getter
+  @Setter
+  public long  consensusLogicOptimization;
 
   private static double calcMaxTimeRatio() {
     //return max(2.0, min(5.0, 5 * 4.0 / max(Runtime.getRuntime().availableProcessors(), 1)));
